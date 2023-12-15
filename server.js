@@ -31,7 +31,10 @@ app.get("/:room", (req, res) => {
 });
 app.use(
   cors({
-    origin: ["http://localhost:3000"],
+    origin: [
+      "http://localhost:3000",
+      "https://accredian-frontend-ecru.vercel.app",
+    ],
     credentials: true,
   })
 );
