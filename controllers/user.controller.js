@@ -6,24 +6,40 @@ const cloudinary = require("cloudinary").v2;
 const formidable = require("formidable");
 const fetch = require("node-fetch");
 const sendToken = require("../utils/jwtToken");
+const pool = require("../start/db.start");
+const { compare, genSaltSync, hash } = require("bcryptjs");
 
 const userProfile = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
+    const db = await pool();
 
-    if (!user) {
-      const error = new Error("user not found");
-      next(error);
-    }
+    const q = "SELECT * FROM Users WHERE id = ?";
 
-    // .cookie("user", JSON.stringify(user), {
-    //   expires: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
-    //   sameSite: "none",
-    //   secure: true,
-    //   httpOnly: false,
-    // })
-    return res.status(201).json({
-      user,
+    db.query(q, [req.user.id], (err, data) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ message: "Database error", error: err.toString() });
+      }
+      if (data.length === 0) {
+        return res.status(400).json({
+          isError: true,
+          message: "User not found!.",
+        });
+      }
+
+      const { user_password, ...user } = data[0];
+
+      // .cookie("user", JSON.stringify(user), {
+      //   expires: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+      //   sameSite: "none",
+      //   secure: true,
+      //   httpOnly: false,
+      // })
+      return res.status(201).json({
+        user,
+        isError: false,
+      });
     });
   } catch (error) {
     next(error);
@@ -61,6 +77,7 @@ const logoutUser = async (req, res, next) => {
       })
       .status(201)
       .json({
+        isError: false,
         message: "Logout successful!",
       });
   } catch (error) {
@@ -371,28 +388,58 @@ const signup = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
 
-    let user = await User.findOne({ email });
-
-    if (user && user.provider !== "email") {
-      next(
-        new Error(
-          `You already have an account with ${user.provider} provider! Please Login with ${user.provider} to continue.`
-        )
-      );
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        isError: false,
+        message: "Please provide all values.",
+      });
     }
 
-    if (user) {
-      const error = new Error("user already exist");
-      next(error);
-    }
+    const db = await pool();
 
-    user = await User.create({
-      name,
-      email,
-      password,
+    const q = "SELECT * FROM Users WHERE email = ?";
+
+    db.query(q, [email], async (err, data) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ message: "Database error", error: err.toString() });
+      }
+      if (data.length) {
+        return res.status(400).json({
+          isError: true,
+          message: "You already have an account! Please Login to continue.",
+        });
+      }
+
+      // Hash the password and create a user
+      const hashPassword = await hash(password, 12);
+
+      const q =
+        "INSERT INTO Users(`user_name`,`email`,`user_password`) VALUES (?)";
+      const values = [name, email, hashPassword];
+
+      db.query(q, [values], (err, data) => {
+        if (err) {
+          return res
+            .status(500)
+            .json({ message: "Database error", error: err.toString() });
+        }
+
+        const q = "SELECT * FROM Users WHERE email = ?";
+
+        db.query(q, [email], async (err, data) => {
+          if (err) {
+            return res
+              .status(500)
+              .json({ message: "Database error", error: err.toString() });
+          }
+          if (data) {
+            return sendToken(data[0], 201, res);
+          }
+        });
+      });
     });
-
-    return sendToken(user, 201, res);
   } catch (error) {
     next(error);
   }
@@ -402,20 +449,42 @@ const signin = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email }).select("+password");
-
-    if (!user) {
-      const error = new Error("user does not exist!");
-      error.statusCode = 404;
-      next(error);
+    if (!email || !password) {
+      return res.status(400).json({
+        isError: false,
+        message: "Please provide all values.",
+      });
     }
 
-    if (await user.comparePassword(password)) {
-      return sendToken(user, 201, res);
-    } else {
-      const error = new Error("Invalid email or password");
-      next(error);
-    }
+    const db = await pool();
+
+    const q = "SELECT * FROM Users WHERE email = ?";
+
+    db.query(q, [email], (err, data) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ message: "Database error", error: err.toString() });
+      }
+      if (data.length === 0) {
+        return res.status(400).json({
+          isError: true,
+          message: "User not found!.",
+        });
+      }
+
+      //Check password
+      const isPasswordCorrect = compare(password, data[0].user_password);
+
+      if (!isPasswordCorrect) {
+        return res.status(400).json({
+          isError: true,
+          message: "Wrong username or password!",
+        });
+      }
+
+      return sendToken(data[0], 201, res);
+    });
   } catch (error) {
     next(error);
   }

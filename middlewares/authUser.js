@@ -1,6 +1,7 @@
 // @ts-nocheck
 const { verify } = require("jsonwebtoken");
 const User = require("../models/User");
+const pool = require("../start/db.start");
 
 const authGuard = async (req, res, next) => {
   const token = (await req.cookies.token) || req.headers.cookie;
@@ -11,9 +12,27 @@ const authGuard = async (req, res, next) => {
     try {
       const { id } = verify(token, process.env.JWT_SECRET);
 
-      req.user = await User.findById(id);
+      const db = await pool();
 
-      next();
+      const q = "SELECT * FROM Users WHERE id = ?";
+
+      db.query(q, [id], (err, data) => {
+        if (err) {
+          return res
+            .status(500)
+            .json({ message: "Database error", error: err.toString() });
+        }
+        if (data.length === 0) {
+          return res.status(400).json({
+            isError: true,
+            message: "User not found!.",
+          });
+        }
+
+        req.user = data[0];
+
+        next();
+      });
     } catch (error) {
       const err = new Error("Not authorized, token failed");
       err.statusCode = 401;
